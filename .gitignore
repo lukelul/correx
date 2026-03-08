@@ -1,0 +1,51 @@
+# ── Next.js ──────────────────────────────────────────────────────────────────
+robotic-task-verification/.next/
+robotic-task-verification/out/
+robotic-task-verification/build/
+robotic-task-verification/node_modules/
+
+# ── Environment (NEVER commit real keys) ─────────────────────────────────────
+.env
+.env.local
+.env*.local
+robotic-task-verification/.env.local
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+correx-env/
+
+# ── ML data (large — use DVC or HuggingFace Hub instead) ─────────────────────
+pipeline/data/
+pipeline/models/clip_features/
+pipeline/models/correx_verifier.pt
+
+# Keep the TF.js export (it's the pre-trained model for the web app)
+!pipeline/models/tfjs/
+!robotic-task-verification/public/model/
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.pem
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+wandb/
+
+# ── TypeScript ────────────────────────────────────────────────────────────────
+*.tsbuildinfo
+robotic-task-verification/next-env.d.ts
+
+# ── Misc ──────────────────────────────────────────────────────────────────────
+=4.9.0

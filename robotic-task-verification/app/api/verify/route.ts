@@ -1,0 +1,206 @@
+import { NextRequest, NextResponse } from "next/server";
+import OpenAI from "openai";
+
+export interface CheckResult {
+  label: string;
+  status: "pass" | "fail" | "warning";
+  detail: string;
+}
+
+export interface VerificationResult {
+  verdict: "PASS" | "FAIL";
+  confidence: number;
+  summary: string;
+  checks: CheckResult[];
+  risk_level: "low" | "medium" | "high" | "critical";
+  recommendation: string;
+}
+
+// Token cost estimates per image (OpenAI pricing):
+//   high detail: ~1000 tokens per 512×512 tile (640px wide → ~2 tiles → ~1700 tokens)
+//   low detail:  85 tokens flat regardless of size
+const TOKENS_HIGH = 1700;
+const TPM_BUDGET = 25000; // stay safely under 30k TPM limit
+const MAX_FRAMES = 20;    // hard cap regardless of token budget
+
+const SYSTEM_PROMPT = `You are a robotic task verification AI. Your job is to analyze images or video frames from robotic task executions and determine whether the task was completed correctly and safely.
+
+CRITICAL INSPECTION RULES:
+- Scan the ENTIRE frame including all four corners and edges — objects are often placed near the periphery of the scene.
+- Do not assume an item is absent just because it is small, partially occluded, or at the edge of the frame. Look carefully.
+- When counting items (e.g. "plate 2 sausages, 2 hashbrowns, 1 egg"), verify each item individually and note its position.
+- NEVER assume the meaning of a dial, knob, switch, or indicator light based on generic conventions. Different appliances have different markings. If the user has provided context about how a specific appliance works, that context is ground truth — trust it over your own assumptions.
+- If you are uncertain about the state of something (e.g. a knob position), say so explicitly and mark it "warning", not "fail". Only mark "fail" when you have clear visual evidence.
+- If a reference image is provided showing the correct/safe state, compare the current image directly to it and describe any differences.
+
+You must evaluate:
+1. Task completion accuracy — did the robot actually accomplish what was asked? Count every required item.
+2. Safety compliance — are there any hazards left behind (e.g., stove left on, spills, unstable objects)?
+3. Environmental state — is the environment in an acceptable post-task state?
+4. Unintended consequences — did the robot cause any collateral issues?
+
+When multiple frames are provided, they are evenly-spaced samples from a video recording of the task. Use the temporal sequence to understand what happened throughout the task, not just the final state. The last frame is most important for verifying final placement.
+
+Return a JSON object with this exact structure:
+{
+  "verdict": "PASS" or "FAIL",
+  "confidence": number between 0 and 100,
+  "summary": "one or two sentence plain-English summary of what you observed, including positions of key items",
+  "checks": [
+    { "label": "Task Completion", "status": "pass"|"fail"|"warning", "detail": "List each required item and whether you can see it, including its position in the frame" },
+    { "label": "Safety Compliance", "status": "pass"|"fail"|"warning", "detail": "Describe exactly what you see and why you reached your conclusion. Do not assume appliance state — cite the specific visual evidence." },
+    { "label": "Environmental State", "status": "pass"|"fail"|"warning", "detail": "..." },
+    { "label": "Unintended Consequences", "status": "pass"|"fail"|"warning", "detail": "..." }
+  ],
+  "risk_level": "low"|"medium"|"high"|"critical",
+  "recommendation": "brief actionable recommendation"
+}
+
+Be precise — do not conflate uncertainty with danger. Mark things "warning" when you cannot be sure, and only use "fail" + high/critical risk when there is clear visual evidence of a problem. Return ONLY valid JSON, no markdown.`;
+
+export async function POST(req: NextRequest) {
+  try {
+    const formData = await req.formData();
+    const taskDescription = formData.get("task") as string;
+
+    if (!taskDescription) {
+      return NextResponse.json(
+        { error: "Task description is required." },
+        { status: 400 }
+      );
+    }
+
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      return NextResponse.json(
+        { error: "OpenAI API key not configured. Add OPENAI_API_KEY to your .env.local file." },
+        { status: 500 }
+      );
+    }
+
+    const client = new OpenAI({ apiKey });
+
+    const context = (formData.get("context") as string | null)?.trim() || null;
+
+    // Optional reference image (known-correct state)
+    const refFile = formData.get("referenceImage") as File | null;
+    let referenceImageUrl: string | null = null;
+    if (refFile && refFile.size > 0) {
+      const refBytes = await refFile.arrayBuffer();
+      const refBase64 = Buffer.from(refBytes).toString("base64");
+      const refMime = refFile.type || "image/jpeg";
+      referenceImageUrl = `data:${refMime};base64,${refBase64}`;
+    }
+
+    type ImageContent = {
+      type: "image_url";
+      image_url: { url: string; detail: "high" | "low" | "auto" };
+    };
+
+    const rawFrameCount = parseInt(formData.get("frameCount") as string ?? "0", 10);
+    let allFrameData: { url: string; ts: number }[] = [];
+
+    if (rawFrameCount > 0) {
+      for (let i = 0; i < rawFrameCount; i++) {
+        const frameData = formData.get(`frame_${i}`) as string;
+        const ts = parseFloat(formData.get(`frame_${i}_ts`) as string ?? "0");
+        if (frameData) allFrameData.push({ url: frameData, ts });
+      }
+    } else {
+      const file = formData.get("file") as File | null;
+      if (!file) {
+        return NextResponse.json({ error: "No image file or frames provided." }, { status: 400 });
+      }
+      const bytes = await file.arrayBuffer();
+      const base64 = Buffer.from(bytes).toString("base64");
+      const mimeType = file.type || "image/jpeg";
+      allFrameData.push({ url: `data:${mimeType};base64,${base64}`, ts: 0 });
+    }
+
+    if (allFrameData.length === 0) {
+      return NextResponse.json({ error: "No valid images to analyze." }, { status: 400 });
+    }
+
+    // --- Token budget management ---
+    // 1. Hard cap at MAX_FRAMES, evenly subsampled to preserve temporal spread
+    if (allFrameData.length > MAX_FRAMES) {
+      const step = allFrameData.length / MAX_FRAMES;
+      allFrameData = Array.from({ length: MAX_FRAMES }, (_, i) =>
+        allFrameData[Math.min(Math.round(i * step), allFrameData.length - 1)]
+      );
+    }
+
+    // 2. Choose detail level based on token budget
+    //    high detail: ~1700 tokens/frame, low detail: 85 tokens/frame
+    const frameCount = allFrameData.length;
+    const tokensIfHigh = frameCount * TOKENS_HIGH;
+    const detail: "high" | "low" = tokensIfHigh <= TPM_BUDGET ? "high" : "low";
+
+    const imageContents: ImageContent[] = allFrameData.map((f) => ({
+      type: "image_url",
+      image_url: { url: f.url, detail },
+    }));
+
+    const isVideo = rawFrameCount > 1;
+    const frameLabel = isVideo
+      ? `${frameCount} frames extracted from the video (detail: ${detail})`
+      : "this image";
+
+    // Build the user message content
+    type TextContent = { type: "text"; text: string };
+    const userContent: (TextContent | ImageContent)[] = [];
+
+    // Main prompt text
+    let promptText = `The robot was asked to: "${taskDescription}"\n`;
+    if (context) {
+      promptText += `\nIMPORTANT CONTEXT about this specific environment/appliance (treat this as ground truth):\n${context}\n`;
+    }
+    if (referenceImageUrl) {
+      promptText += `\nA reference image showing the CORRECT/SAFE state is provided first, followed by the image(s) to verify. Compare them directly.\n`;
+    }
+    promptText += `\nAnalyze ${frameLabel} and determine if the task was completed correctly and safely.`;
+    if (isVideo) promptText += " The frames are in chronological order from start to end of the recording.";
+
+    userContent.push({ type: "text", text: promptText });
+
+    // Reference image goes first if provided
+    if (referenceImageUrl) {
+      userContent.push({
+        type: "image_url",
+        image_url: { url: referenceImageUrl, detail: "high" },
+      });
+      userContent.push({ type: "text", text: "--- End of reference image. Now analyzing the task output below: ---" });
+    }
+
+    // Task output frames
+    userContent.push(...imageContents);
+
+    const response = await client.chat.completions.create({
+      model: "gpt-4o",
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: userContent },
+      ],
+      max_tokens: 1024,
+      temperature: 0.2,
+    });
+
+    const raw = response.choices[0]?.message?.content ?? "";
+
+    let result: VerificationResult;
+    try {
+      result = JSON.parse(raw);
+    } catch {
+      return NextResponse.json(
+        { error: "Failed to parse model response. Raw: " + raw },
+        { status: 500 }
+      );
+    }
+
+    // Return detail mode used so the UI can show it
+    return NextResponse.json({ ...result, _detail: detail, _framesSent: frameCount });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}

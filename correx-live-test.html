@@ -1,0 +1,917 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Correx — Live Monitor</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f8f8f7; }
+  .shadow-soft { box-shadow: 0 2px 12px rgba(0,0,0,0.06), 0 1px 3px rgba(0,0,0,0.04); }
+  .scrollbar-thin::-webkit-scrollbar { width: 4px; }
+  .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+  .scrollbar-thin::-webkit-scrollbar-thumb { background: #e5e7eb; border-radius: 2px; }
+  @keyframes pulse-soft { 0%,100%{opacity:1} 50%{opacity:.5} }
+  .animate-pulse-soft { animation: pulse-soft 2s infinite; }
+  @keyframes slide-in { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
+  .slide-in { animation: slide-in 0.2s ease forwards; }
+  @keyframes flash-red { 0%,100%{background:#fef2f2} 50%{background:#fee2e2} }
+  .flash-red { animation: flash-red 0.6s ease 3; }
+  pre { white-space: pre-wrap; word-break: break-all; }
+</style>
+</head>
+<body class="min-h-screen">
+
+<!-- Banner -->
+<div id="banner" class="hidden text-xs font-semibold text-center py-2 px-4"></div>
+
+<!-- Header -->
+<header class="pt-6 pb-4 px-6 text-center relative">
+  <div class="flex items-center justify-between max-w-5xl mx-auto">
+    <div class="text-left">
+      <h1 class="text-3xl font-bold text-gray-900" style="font-family:Georgia,serif;letter-spacing:-0.5px">Correx</h1>
+      <p class="text-xs text-gray-400 mt-0.5">Robotic Safety Compliance — Live Monitor</p>
+    </div>
+    <div class="flex items-center gap-2">
+      <!-- Mode toggle -->
+      <div class="flex bg-gray-100 rounded-full p-0.5 text-xs font-semibold" id="modeToggle">
+        <button onclick="setMode('sim')" id="btn-sim" class="px-3 py-1.5 rounded-full transition-all bg-white text-gray-800 shadow-sm">Simulation</button>
+        <button onclick="setMode('ai')" id="btn-ai" class="px-3 py-1.5 rounded-full transition-all text-gray-500">AI Mode</button>
+      </div>
+      <!-- Pause/Resume -->
+      <button onclick="togglePause()" id="pauseBtn" class="text-xs font-semibold px-3 py-1.5 rounded-full bg-gray-900 text-white hover:bg-gray-800 transition-colors">Pause</button>
+      <!-- Alert Settings -->
+      <button onclick="toggleAlertPanel()" id="alertBtn" class="text-xs font-semibold px-3 py-1.5 rounded-full border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors">🔔 Alerts</button>
+    </div>
+  </div>
+</header>
+
+<!-- Alert Settings Panel -->
+<div id="alertPanel" class="hidden max-w-5xl mx-auto px-6 mb-3">
+  <div class="bg-white rounded-2xl shadow-soft p-4">
+    <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Alert Settings — HIGH Severity Only</p>
+    <div class="grid grid-cols-2 gap-3">
+      <div>
+        <label class="text-[10px] text-gray-400 font-semibold uppercase block mb-1">Email</label>
+        <input id="alertEmail" type="email" placeholder="alerts@company.com" class="w-full text-xs bg-gray-50 rounded-xl px-3 py-2 outline-none border border-gray-100 focus:border-blue-300">
+      </div>
+      <div>
+        <label class="text-[10px] text-gray-400 font-semibold uppercase block mb-1">Phone (SMS)</label>
+        <input id="alertPhone" type="tel" placeholder="+1 (555) 000-0000" class="w-full text-xs bg-gray-50 rounded-xl px-3 py-2 outline-none border border-gray-100 focus:border-blue-300">
+      </div>
+    </div>
+    <div class="flex items-center justify-between mt-3">
+      <p class="text-[10px] text-gray-400">Requires <code class="bg-gray-100 px-1 rounded">RESEND_API_KEY</code> + Twilio in server config</p>
+      <button onclick="saveAlerts()" class="text-xs font-semibold bg-blue-700 text-white px-4 py-1.5 rounded-full hover:bg-blue-800 transition-colors">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Main content -->
+<main class="max-w-5xl mx-auto px-6 pb-16 space-y-4">
+
+  <!-- Camera + Stats row -->
+  <div class="grid grid-cols-1 lg:grid-cols-5 gap-4">
+
+    <!-- Camera feed -->
+    <div class="lg:col-span-2 bg-white rounded-2xl shadow-soft overflow-hidden">
+      <div class="relative bg-gray-900" style="min-height:200px">
+        <video id="cameraFeed" autoplay playsinline muted class="w-full object-cover" style="max-height:220px;display:none"></video>
+        <canvas id="cameraCanvas" class="absolute inset-0 pointer-events-none w-full h-full" style="display:none"></canvas>
+
+        <!-- No-camera placeholder -->
+        <div id="cameraPlaceholder" class="flex flex-col items-center justify-center gap-3 p-8" style="min-height:200px">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z" stroke="#d1d5db" stroke-width="1.5"/><circle cx="12" cy="13" r="4" stroke="#d1d5db" stroke-width="1.5"/></svg>
+          <button onclick="startCamera()" class="text-xs font-semibold bg-blue-700 text-white px-4 py-2 rounded-full hover:bg-blue-800 transition-colors">Enable Camera</button>
+          <p id="cameraError" class="text-[10px] text-gray-400 text-center hidden max-w-[180px] leading-relaxed"></p>
+        </div>
+
+        <!-- Camera controls overlay -->
+        <div id="cameraControls" class="absolute top-2 right-2 flex gap-1.5" style="display:none">
+          <button onclick="flipCamera()" title="Flip" class="w-8 h-8 rounded-full bg-black/50 hover:bg-black/70 flex items-center justify-center transition-colors">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M20 7l-4-4-4 4M16 3v9M4 17l4 4 4-4M8 21v-9" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>
+          </button>
+        </div>
+
+        <!-- AI inference overlay -->
+        <div id="aiOverlay" class="absolute bottom-2 left-2 right-2 flex justify-between items-end" style="display:none">
+          <span id="aiStatus" class="text-[10px] font-semibold bg-black/60 text-white px-2 py-1 rounded-full"></span>
+          <span id="aiLatency" class="text-[10px] font-mono bg-black/60 text-white px-2 py-1 rounded-full"></span>
+        </div>
+      </div>
+
+      <!-- Task input -->
+      <div class="p-4">
+        <label class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider block mb-2">Active Task</label>
+        <input id="taskInput" type="text" value="Pick and place item from shelf B3 to bin #14"
+          class="w-full text-xs text-gray-800 bg-gray-50 rounded-xl px-3 py-2 outline-none border border-gray-100 focus:border-blue-300">
+        <div class="flex items-center gap-2 mt-2">
+          <span id="runningDot" class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse-soft"></span>
+          <span id="runningLabel" class="text-[10px] text-gray-500">Monitoring active</span>
+          <span id="analyzingBadge" class="hidden text-[10px] font-semibold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded-full">Analyzing…</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stats + Event Log -->
+    <div class="lg:col-span-3 flex flex-col gap-4">
+
+      <!-- Stats row -->
+      <div class="grid grid-cols-4 gap-3">
+        <div class="bg-white rounded-2xl shadow-soft p-3 text-center">
+          <p id="statTasks" class="text-xl font-bold text-gray-900">0</p>
+          <p class="text-[10px] text-gray-400 mt-0.5">Tasks</p>
+        </div>
+        <div class="bg-white rounded-2xl shadow-soft p-3 text-center">
+          <p id="statCaught" class="text-xl font-bold text-emerald-600">0</p>
+          <p class="text-[10px] text-gray-400 mt-0.5">Caught</p>
+        </div>
+        <div id="statAccCard" class="bg-white rounded-2xl shadow-soft p-3 text-center">
+          <p id="statAcc" class="text-xl font-bold text-emerald-600">—</p>
+          <p class="text-[10px] text-gray-400 mt-0.5">Accuracy</p>
+          <p id="statMissed" class="text-[9px] font-bold text-red-500 hidden"></p>
+        </div>
+        <div class="bg-white rounded-2xl shadow-soft p-3 text-center">
+          <p id="statCost" class="text-xl font-bold text-blue-600">$0</p>
+          <p class="text-[10px] text-gray-400 mt-0.5">Prevented</p>
+        </div>
+      </div>
+
+      <!-- Event Log + Correction Queue -->
+      <div class="grid grid-cols-5 gap-3" style="height:320px">
+        <!-- Event Feed -->
+        <div class="col-span-3 bg-white rounded-2xl shadow-soft flex flex-col">
+          <div class="flex items-center justify-between px-4 pt-3 pb-2 border-b border-gray-50">
+            <div class="flex items-center gap-2">
+              <span id="feedDot" class="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse-soft"></span>
+              <span class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider" id="feedLabel">Robot Feed</span>
+            </div>
+            <!-- Sparkline -->
+            <div class="flex items-center gap-1.5">
+              <svg id="sparkline" width="80" height="22" viewBox="0 0 80 22"></svg>
+              <span id="avgLatency" class="text-[9px] font-mono text-gray-400"></span>
+            </div>
+          </div>
+          <div id="eventLog" class="flex-1 overflow-y-auto px-2 py-1.5 space-y-0.5 scrollbar-thin">
+            <div class="flex items-center justify-center h-full">
+              <p class="text-xs text-gray-300">Starting feed…</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Correction Queue -->
+        <div class="col-span-2 bg-white rounded-2xl shadow-soft flex flex-col">
+          <div class="flex items-center justify-between px-3 pt-3 pb-2 border-b border-gray-50">
+            <div class="flex items-center gap-1.5">
+              <span class="w-1.5 h-1.5 rounded-full bg-orange-400"></span>
+              <span class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Corrections</span>
+            </div>
+            <span id="pendingBadge" class="hidden text-[9px] font-semibold text-orange-600 bg-orange-50 px-1.5 py-0.5 rounded-full"></span>
+          </div>
+          <div id="correctionQueue" class="flex-1 overflow-y-auto px-2 py-2 space-y-1.5 scrollbar-thin">
+            <div class="flex items-center justify-center h-full">
+              <p class="text-[10px] text-gray-300 text-center">No corrections queued</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ROI bar -->
+  <div class="bg-white rounded-2xl shadow-soft px-5 py-4 flex items-center justify-between">
+    <div>
+      <p class="text-[10px] text-gray-400 font-semibold uppercase tracking-wider">Session Cost Prevented</p>
+      <p id="bigCost" class="text-2xl font-bold text-emerald-600 mt-0.5 tabular-nums">$0</p>
+    </div>
+    <div class="flex items-center gap-2">
+      <!-- Mode indicator -->
+      <span id="modeBadge" class="text-[10px] font-semibold bg-gray-100 text-gray-600 px-2.5 py-1 rounded-full">Simulation Mode</span>
+      <!-- WMS toggle -->
+      <div class="flex bg-gray-100 rounded-full p-0.5 text-[10px] font-semibold" id="wmsToggle">
+        <button onclick="setWMS('standalone')" id="btn-standalone" class="px-2.5 py-1 rounded-full bg-white text-gray-800 shadow-sm transition-all">Standalone</button>
+        <button onclick="setWMS('wms')" id="btn-wms" class="px-2.5 py-1 rounded-full text-gray-500 transition-all">WMS Connected</button>
+      </div>
+      <button onclick="showReport()" class="text-xs font-semibold bg-blue-700 text-white px-4 py-2 rounded-full hover:bg-blue-800 transition-colors flex items-center gap-1.5">
+        <svg width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M3 2h10a1 1 0 011 1v10a1 1 0 01-1 1H3a1 1 0 01-1-1V3a1 1 0 011-1z" stroke="white" stroke-width="1.3"/><path d="M5 6h6M5 8.5h6M5 11h4" stroke="white" stroke-width="1.3" stroke-linecap="round"/></svg>
+        Monthly Report
+      </button>
+    </div>
+  </div>
+
+  <!-- Webhook Panel -->
+  <div class="bg-white rounded-2xl shadow-soft overflow-hidden">
+    <button onclick="toggleWebhook()" class="w-full flex items-center justify-between px-4 py-3">
+      <div class="flex items-center gap-2">
+        <span class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Webhook Output</span>
+        <span id="webhookFiredBadge" class="hidden text-[9px] font-bold bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-full">FIRED</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <span id="webhookHint" class="text-[10px] text-gray-400">Waiting for failure…</span>
+        <svg id="webhookChevron" width="12" height="12" viewBox="0 0 12 12" fill="none" class="transition-transform"><path d="M2 4l4 4 4-4" stroke="#9ca3af" stroke-width="1.5" stroke-linecap="round"/></svg>
+      </div>
+    </button>
+    <div id="webhookPanel" class="hidden border-t border-gray-50 p-4">
+      <pre id="webhookJSON" class="text-[10px] text-gray-600 bg-gray-50 rounded-xl p-3 font-mono leading-relaxed">Waiting for first failure event…</pre>
+    </div>
+  </div>
+
+  <!-- AI Model Loader (shown in AI mode) -->
+  <div id="modelLoader" class="hidden bg-white rounded-2xl shadow-soft p-5">
+    <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">CorrexVerifier Model</p>
+    <div class="flex items-center gap-3">
+      <div id="modelStatus" class="flex-1 text-xs text-gray-600 bg-gray-50 rounded-xl px-3 py-2">
+        No model loaded — click Load to select model.json
+      </div>
+      <label class="text-xs font-semibold bg-blue-700 text-white px-4 py-2 rounded-full hover:bg-blue-800 transition-colors cursor-pointer">
+        Load Model
+        <input type="file" id="modelFileInput" accept=".json" class="hidden" onchange="loadModelFromFile(event)">
+      </label>
+      <button onclick="loadModelFromPath()" class="text-xs font-semibold border border-gray-200 text-gray-600 px-3 py-2 rounded-full hover:bg-gray-50 transition-colors">Auto-detect</button>
+    </div>
+    <p class="text-[10px] text-gray-400 mt-2">
+      Auto-detect loads <code class="bg-gray-100 px-1 rounded">./model/model.json</code> from same directory.
+      Run <code class="bg-gray-100 px-1 rounded">pipeline/4_export.py</code> to generate the model.
+    </p>
+  </div>
+
+</main>
+
+<!-- Report Modal -->
+<div id="reportModal" class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" onclick="hideReport()">
+  <div onclick="event.stopPropagation()" class="bg-white rounded-2xl w-full max-w-sm overflow-hidden shadow-xl">
+    <div class="bg-blue-700 px-6 py-4">
+      <p class="text-blue-200 text-[10px] font-bold uppercase tracking-wider">Correx</p>
+      <h2 class="text-white text-lg font-bold mt-0.5">Session Report</h2>
+      <p id="reportDate" class="text-blue-300 text-xs mt-0.5"></p>
+    </div>
+    <div id="reportBody" class="px-6 py-4 space-y-1"></div>
+    <div id="reportSummary" class="mx-6 mb-5 p-3.5 bg-blue-50 rounded-xl border border-blue-100"></div>
+    <div class="px-6 pb-5">
+      <button onclick="hideReport()" class="w-full py-2.5 rounded-xl text-sm font-semibold bg-gray-900 text-white hover:bg-gray-800 transition-colors">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- False Negative Alarm -->
+<div id="fnAlarm" class="hidden fixed top-4 left-1/2 -translate-x-1/2 bg-red-600 text-white px-5 py-3 rounded-2xl shadow-xl z-50 flex items-center gap-3 text-sm font-semibold">
+  🚨 FALSE NEGATIVE — Failure escaped without correction
+</div>
+
+<script>
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const ROBOT_IDS = ["WH-BOT-01","WH-BOT-02","WH-BOT-03","WH-BOT-04","WH-BOT-05","WH-BOT-06"];
+const FAILURE_RATE = 0.28;
+const MISS_RATE = 0.04;
+
+const FAILURE_EVENTS = [
+  { failureType:"Item Drop", action:"Item dropped mid-transit — grip failure detected", severity:"HIGH", correction:"Increase grip force to 75% on next attempt. Re-approach pickup point and verify secure hold before movement.", costImpact:240, triggerSignal:"Grip force sensor: 12N below threshold" },
+  { failureType:"Wrong SKU", action:"Picked wrong SKU — barcode mismatch detected", severity:"MEDIUM", correction:"Re-scan barcode. Verify SKU matches manifest before lifting. Cross-reference with bin label.", costImpact:180, triggerSignal:"Barcode scanner: SKU mismatch (expected #4421, got #4412)" },
+  { failureType:"Placement Miss", action:"Bin placement missed by 3.2cm — item misaligned", severity:"LOW", correction:"Recalibrate placement arm +3.2cm offset on Y-axis. Re-attempt drop sequence.", costImpact:45, triggerSignal:"Position encoder: 3.2cm Y-axis offset detected" },
+  { failureType:"Obstruction", action:"Conveyor belt obstruction detected — emergency stop triggered", severity:"HIGH", correction:"Halt all movement on conveyor C2. Alert supervisor. Clear obstruction before resuming operations.", costImpact:500, triggerSignal:"LiDAR scan: foreign object at 0.12m on conveyor path" },
+  { failureType:"Unsecured Load", action:"Item not secured before movement initiated", severity:"HIGH", correction:"Verify grip force ≥ 60% on all axes before transit. Re-grasp and confirm sensor reading.", costImpact:380, triggerSignal:"Load cell: grip confirmation < 60% threshold" },
+  { failureType:"Collision Risk", action:"Proximity sensor triggered — potential collision at 0.4m", severity:"HIGH", correction:"Halt all joint movement immediately. Re-evaluate navigation path. Increase minimum safe clearance to 0.8m.", costImpact:750, triggerSignal:"Proximity sensor array: 0.4m clearance breach" },
+  { failureType:"Payload Overload", action:"Item weight exceeds rated payload by 14%", severity:"MEDIUM", correction:"Switch to two-arm grip sequence. Reduce travel speed to 40% for this payload class.", costImpact:210, triggerSignal:"Force/torque sensor: 14% over rated payload limit" },
+  { failureType:"Angle Deviation", action:"Shelf retrieval angle deviation > 5° from baseline", severity:"LOW", correction:"Re-home arm to calibration position. Re-approach shelf at standard 0° offset and retry.", costImpact:60, triggerSignal:"IMU: 5.3° tilt deviation from baseline" },
+  { failureType:"Sensor Fault", action:"Depth sensor reading inconsistent — frame skipped", severity:"MEDIUM", correction:"Run sensor self-calibration sequence. If fault persists, flag unit for hardware inspection.", costImpact:290, triggerSignal:"Depth camera: frame correlation failure (3 consecutive frames)" },
+  { failureType:"Path Blocked", action:"Navigation path blocked — obstacle detected at waypoint 3", severity:"HIGH", correction:"Reroute via alternate path C. If unavailable, hold position and request manual clearance.", costImpact:420, triggerSignal:"Nav mesh: waypoint 3 unreachable — obstacle detected" },
+];
+
+const SUCCESS_ACTIONS = [
+  "Picking item from shelf B3",
+  "Placing item in bin #14",
+  "Navigating to station 4",
+  "Scanning barcode on pallet P-2284",
+  "Loading conveyor belt C2",
+  "Retrieving item from shelf A7",
+  "Sorting package to lane 3",
+  "Stacking boxes in zone D",
+  "Verifying item weight — 4.2 kg",
+  "Transferring pallet to dock 2",
+];
+
+// Label map for AI mode output
+const AI_LABEL_MAP = {
+  success: null,
+  wrong_item: FAILURE_EVENTS[1],
+  drop_detected: FAILURE_EVENTS[0],
+  placement_miss: FAILURE_EVENTS[2],
+  grip_failure: FAILURE_EVENTS[4],
+};
+
+// ─── State ────────────────────────────────────────────────────────────────────
+
+let mode = 'sim';       // 'sim' | 'ai'
+let wmsMode = 'standalone';
+let paused = false;
+let cameraStream = null;
+let facingMode = 'environment';
+let tfjsModel = null;
+let frameBuffer = [];   // rolling 16-frame canvas buffer for AI mode
+let aiInterval = null;
+let tickTimeout = null;
+
+let stats = { tasks: 0, caught: 0, missed: 0, success: 0, totalCost: 0 };
+let latencies = [];
+let allEvents = [];
+let allLatencies = [];
+let corrections = [];
+let savedEmail = '';
+let savedPhone = '';
+let lastWebhookPayload = null;
+
+// ─── Mode Control ─────────────────────────────────────────────────────────────
+
+function setMode(m) {
+  mode = m;
+  document.getElementById('btn-sim').className = m === 'sim'
+    ? 'px-3 py-1.5 rounded-full bg-white text-gray-800 shadow-sm transition-all'
+    : 'px-3 py-1.5 rounded-full text-gray-500 transition-all';
+  document.getElementById('btn-ai').className = m === 'ai'
+    ? 'px-3 py-1.5 rounded-full bg-white text-gray-800 shadow-sm transition-all'
+    : 'px-3 py-1.5 rounded-full text-gray-500 transition-all';
+  document.getElementById('modeBadge').textContent = m === 'ai' ? 'AI Mode' : 'Simulation Mode';
+  document.getElementById('modeBadge').className = m === 'ai'
+    ? 'text-[10px] font-semibold bg-blue-50 text-blue-600 px-2.5 py-1 rounded-full'
+    : 'text-[10px] font-semibold bg-gray-100 text-gray-600 px-2.5 py-1 rounded-full';
+  document.getElementById('modelLoader').style.display = m === 'ai' ? '' : 'none';
+  document.getElementById('aiOverlay').style.display = m === 'ai' && cameraStream ? 'flex' : 'none';
+  if (m === 'ai' && !tfjsModel) {
+    loadModelFromPath();
+  }
+}
+
+function setWMS(m) {
+  wmsMode = m;
+  document.getElementById('btn-standalone').className = m === 'standalone'
+    ? 'px-2.5 py-1 rounded-full bg-white text-gray-800 shadow-sm transition-all'
+    : 'px-2.5 py-1 rounded-full text-gray-500 transition-all';
+  document.getElementById('btn-wms').className = m === 'wms'
+    ? 'px-2.5 py-1 rounded-full bg-white text-gray-800 shadow-sm transition-all'
+    : 'px-2.5 py-1 rounded-full text-gray-500 transition-all';
+}
+
+function togglePause() {
+  paused = !paused;
+  document.getElementById('pauseBtn').textContent = paused ? 'Resume' : 'Pause';
+  document.getElementById('pauseBtn').className = paused
+    ? 'text-xs font-semibold px-3 py-1.5 rounded-full bg-emerald-500 text-white hover:bg-emerald-600 transition-colors'
+    : 'text-xs font-semibold px-3 py-1.5 rounded-full bg-gray-900 text-white hover:bg-gray-800 transition-colors';
+  document.getElementById('runningDot').className = paused
+    ? 'w-1.5 h-1.5 rounded-full bg-gray-300'
+    : 'w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse-soft';
+  document.getElementById('runningLabel').textContent = paused ? 'Monitoring paused' : 'Monitoring active';
+  if (!paused) scheduleTick();
+}
+
+function toggleAlertPanel() {
+  const p = document.getElementById('alertPanel');
+  p.classList.toggle('hidden');
+}
+
+function saveAlerts() {
+  savedEmail = document.getElementById('alertEmail').value.trim();
+  savedPhone = document.getElementById('alertPhone').value.trim();
+  document.getElementById('alertBtn').className = (savedEmail || savedPhone)
+    ? 'text-xs font-semibold px-3 py-1.5 rounded-full border border-blue-300 bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors'
+    : 'text-xs font-semibold px-3 py-1.5 rounded-full border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors';
+  document.getElementById('alertBtn').textContent = (savedEmail || savedPhone) ? '🔔 Alerts On' : '🔔 Alerts';
+  document.getElementById('alertPanel').classList.add('hidden');
+}
+
+// ─── Banner ───────────────────────────────────────────────────────────────────
+
+function showBanner(msg, color) {
+  const b = document.getElementById('banner');
+  b.textContent = msg;
+  b.className = `text-xs font-semibold text-center py-2 px-4 ${
+    color === 'green'  ? 'bg-emerald-100 text-emerald-800' :
+    color === 'yellow' ? 'bg-amber-100 text-amber-800' :
+    color === 'red'    ? 'bg-red-100 text-red-800' :
+                         'bg-blue-100 text-blue-800'}`;
+  b.style.display = '';
+  if (color !== 'yellow') setTimeout(() => { b.style.display = 'none'; }, 4000);
+}
+
+// ─── Camera ───────────────────────────────────────────────────────────────────
+
+async function startCamera() {
+  try {
+    cameraStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: facingMode }, width: { ideal: 1920 }, height: { ideal: 1080 } }
+    });
+    const video = document.getElementById('cameraFeed');
+    video.srcObject = cameraStream;
+    video.style.display = '';
+    document.getElementById('cameraPlaceholder').style.display = 'none';
+    document.getElementById('cameraControls').style.display = 'flex';
+    if (mode === 'ai') document.getElementById('aiOverlay').style.display = 'flex';
+
+    // Check multiple cameras
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    if (devices.filter(d => d.kind === 'videoinput').length < 2) {
+      document.getElementById('cameraControls').style.display = 'none';
+    }
+  } catch (err) {
+    const errEl = document.getElementById('cameraError');
+    errEl.classList.remove('hidden');
+    if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+      errEl.textContent = 'Camera permission denied. Allow camera access in browser settings and reload.';
+    } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+      errEl.textContent = 'No camera hardware found on this device.';
+    } else {
+      errEl.textContent = `Camera error: ${err.message}`;
+    }
+  }
+}
+
+function flipCamera() {
+  facingMode = facingMode === 'environment' ? 'user' : 'environment';
+  if (cameraStream) {
+    cameraStream.getTracks().forEach(t => t.stop());
+    cameraStream = null;
+    document.getElementById('cameraFeed').srcObject = null;
+  }
+  startCamera();
+}
+
+// Capture a frame from camera to a canvas, push to buffer
+function captureFrame() {
+  const video = document.getElementById('cameraFeed');
+  if (!video || video.paused || !video.videoWidth) return null;
+  const c = document.createElement('canvas');
+  c.width = 224; c.height = 224;
+  const ctx = c.getContext('2d');
+  // Center-crop to square, then resize
+  const vw = video.videoWidth, vh = video.videoHeight;
+  const size = Math.min(vw, vh);
+  const sx = (vw - size) / 2, sy = (vh - size) / 2;
+  ctx.drawImage(video, sx, sy, size, size, 0, 0, 224, 224);
+  return c;
+}
+
+// ─── TFJS Model ───────────────────────────────────────────────────────────────
+
+async function loadModelFromPath() {
+  await tryLoadModel('./model/model.json');
+}
+
+async function loadModelFromFile(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const url = URL.createObjectURL(file);
+  await tryLoadModel(tf.io.browserFiles([file]));
+}
+
+async function tryLoadModel(source) {
+  document.getElementById('modelStatus').textContent = 'Loading model…';
+  try {
+    tfjsModel = await tf.loadLayersModel(source);
+    document.getElementById('modelStatus').textContent = `✓ CorrexVerifier loaded — input shape: ${JSON.stringify(tfjsModel.inputs[0].shape)}`;
+    showBanner('✓ AI Mode active — CorrexVerifier loaded', 'green');
+    startAIInference();
+  } catch (e) {
+    document.getElementById('modelStatus').textContent = `Load failed: ${e.message}`;
+    showBanner('⚠ Model failed to load — falling back to Simulation mode', 'yellow');
+    tfjsModel = null;
+  }
+}
+
+function startAIInference() {
+  if (aiInterval) clearInterval(aiInterval);
+  aiInterval = setInterval(runAIInference, 2000);
+}
+
+async function runAIInference() {
+  if (!tfjsModel || paused) return;
+  const frame = captureFrame();
+  if (!frame) return;
+
+  frameBuffer.push(frame);
+  if (frameBuffer.length > 16) frameBuffer.shift();
+  if (frameBuffer.length < 16) {
+    document.getElementById('aiStatus').textContent = `Buffering ${frameBuffer.length}/16 frames`;
+    return;
+  }
+
+  const start = performance.now();
+  document.getElementById('aiStatus').textContent = 'Running inference…';
+
+  try {
+    const tensors = frameBuffer.map(c =>
+      tf.tidy(() => {
+        const t = tf.browser.fromPixels(c);                    // [224,224,3]
+        const norm = t.toFloat()
+          .sub([0.48145466 * 255, 0.4578275 * 255, 0.40821073 * 255])
+          .div([0.26862954 * 255, 0.26130258 * 255, 0.27577711 * 255]);
+        return norm;
+      })
+    );
+    const input = tf.stack(tensors).expandDims(0);             // [1,16,224,224,3]
+    const output = tfjsModel.predict(input);
+    const probs = await output.data();
+    const latMs = Math.round(performance.now() - start);
+
+    tensors.forEach(t => t.dispose());
+    input.dispose();
+    output.dispose();
+
+    const labels = ['success','wrong_item','drop_detected','placement_miss','grip_failure'];
+    const maxIdx = Array.from(probs).indexOf(Math.max(...probs));
+    const label = labels[maxIdx];
+    const confidence = Math.round(probs[maxIdx] * 1000) / 10;
+
+    document.getElementById('aiStatus').textContent = `${label.replace('_',' ')} — ${confidence}%`;
+    document.getElementById('aiLatency').textContent = `${latMs}ms`;
+
+    // Inject as real event
+    injectAIEvent(label, confidence, latMs);
+  } catch (e) {
+    console.error('Inference error:', e);
+    document.getElementById('aiStatus').textContent = 'Inference error';
+  }
+}
+
+function injectAIEvent(label, confidence, latencyMs) {
+  const robotId = ROBOT_IDS[Math.floor(Math.random() * ROBOT_IDS.length)];
+  if (label === 'success') {
+    const event = {
+      id: Math.random().toString(36).slice(2,10),
+      timestamp: Date.now(),
+      action: document.getElementById('taskInput').value || 'Robot task completed',
+      status: 'success',
+      confidence,
+      robotId,
+      latencyMs,
+      source: 'ai',
+    };
+    processEvent(event);
+  } else {
+    const template = AI_LABEL_MAP[label] || FAILURE_EVENTS[0];
+    const event = {
+      id: Math.random().toString(36).slice(2,10),
+      timestamp: Date.now(),
+      action: template.action,
+      status: 'failure',
+      severity: template.severity,
+      failureType: template.failureType,
+      correction: template.correction,
+      costImpact: template.costImpact,
+      triggerSignal: `AI detected: ${label.replace('_',' ')} (${template.triggerSignal})`,
+      confidence,
+      robotId,
+      latencyMs,
+      missed: false,
+      source: 'ai',
+    };
+    processEvent(event);
+  }
+}
+
+// ─── Simulation Tick ──────────────────────────────────────────────────────────
+
+function scheduleTick() {
+  if (paused || mode === 'ai') return;
+  clearTimeout(tickTimeout);
+  const latencyMs = 180 + Math.floor(Math.random() * 300);
+  showAnalyzing(true);
+  tickTimeout = setTimeout(() => {
+    showAnalyzing(false);
+    const event = generateSimEvent(latencyMs);
+    processEvent(event);
+    tickTimeout = setTimeout(scheduleTick, Math.max(400, 2200 - latencyMs));
+  }, latencyMs);
+}
+
+function showAnalyzing(on) {
+  const b = document.getElementById('analyzingBadge');
+  b.classList.toggle('hidden', !on);
+  const dot = document.getElementById('feedDot');
+  dot.className = on
+    ? 'w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse-soft'
+    : 'w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse-soft';
+}
+
+function generateSimEvent(latencyMs) {
+  const id = Math.random().toString(36).slice(2,10);
+  const robotId = ROBOT_IDS[Math.floor(Math.random() * ROBOT_IDS.length)];
+  const isFailure = Math.random() < FAILURE_RATE;
+  if (isFailure) {
+    const f = FAILURE_EVENTS[Math.floor(Math.random() * FAILURE_EVENTS.length)];
+    const missed = Math.random() < MISS_RATE;
+    return { id, timestamp: Date.now(), action: f.action, status: 'failure',
+      severity: f.severity, failureType: f.failureType, correction: f.correction,
+      costImpact: f.costImpact, triggerSignal: f.triggerSignal,
+      confidence: Math.round((82 + Math.random() * 15) * 10) / 10,
+      robotId, missed, latencyMs, source: 'sim' };
+  }
+  return { id, timestamp: Date.now(),
+    action: SUCCESS_ACTIONS[Math.floor(Math.random() * SUCCESS_ACTIONS.length)],
+    status: 'success',
+    confidence: Math.round((93 + Math.random() * 7) * 10) / 10,
+    robotId, latencyMs, source: 'sim' };
+}
+
+// ─── Event Processing ─────────────────────────────────────────────────────────
+
+function processEvent(event) {
+  allEvents.push(event);
+  allLatencies.push(event.latencyMs || 0);
+  latencies.push(event.latencyMs || 0);
+  if (latencies.length > 10) latencies.shift();
+
+  if (event.status === 'failure') {
+    if (event.missed) {
+      stats.missed++;
+      flashFNAlarm();
+    } else {
+      stats.caught++;
+      stats.tasks++;
+      animateCost(stats.totalCost + event.costImpact);
+      stats.totalCost += event.costImpact;
+      // Correction queue
+      addCorrection(event);
+      // Webhook
+      fireWebhook(event);
+      // Alerts
+      if (event.severity === 'HIGH' && (savedEmail || savedPhone)) {
+        sendAlerts(event);
+      }
+    }
+  } else {
+    stats.success++;
+    stats.tasks++;
+  }
+
+  renderEventRow(event);
+  updateStats();
+  updateSparkline();
+}
+
+// ─── UI Renderers ─────────────────────────────────────────────────────────────
+
+function renderEventRow(event) {
+  const log = document.getElementById('eventLog');
+  // Clear placeholder
+  if (log.querySelector('p')) log.innerHTML = '';
+
+  const isFailure = event.status === 'failure';
+  const isMissed = event.missed;
+  const lat = event.latencyMs;
+  const isSlowLat = lat > 500;
+  const time = new Date(event.timestamp).toLocaleTimeString('en', { hour12:false });
+
+  const div = document.createElement('div');
+  div.className = `slide-in flex flex-col gap-1 py-2 px-2 rounded-xl text-xs ${
+    isMissed ? 'bg-red-100 border-2 border-red-400' :
+    isFailure ? 'bg-red-50 border border-red-100' : 'hover:bg-gray-50'}`;
+
+  // Header row
+  const header = document.createElement('div');
+  header.className = 'flex items-start gap-2';
+  header.innerHTML = `
+    <span class="text-gray-300 font-mono text-[10px] flex-shrink-0 w-14 mt-0.5">${time}</span>
+    <span class="flex-shrink-0 mt-0.5">${isFailure ? (isMissed ? '🔴' : '⚠️') : '✅'}</span>
+    <span class="flex-1 leading-relaxed ${isMissed ? 'text-red-800 font-bold' : isFailure ? 'text-red-700 font-medium' : 'text-gray-600'}">
+      ${isMissed ? '⚠ MISSED: ' : ''}${event.action}
+    </span>
+    <div class="flex items-center gap-1 flex-shrink-0">
+      ${isFailure && event.severity ? `<span class="text-[9px] font-bold px-1.5 py-0.5 rounded-md ${event.severity==='HIGH'?'bg-red-50 text-red-700':event.severity==='MEDIUM'?'bg-orange-50 text-orange-700':'bg-yellow-50 text-yellow-700'}">${event.severity}</span>` : ''}
+      ${lat != null ? `<span class="text-[9px] font-mono px-1 py-0.5 rounded ${isSlowLat ? 'text-red-600 bg-red-50 font-bold' : 'text-gray-400'}">${isSlowLat?'⚠':''}${lat}ms</span>` : ''}
+      ${event.source === 'ai' ? '<span class="text-[9px] font-bold bg-blue-50 text-blue-600 px-1 py-0.5 rounded">AI</span>' : ''}
+    </div>`;
+  div.appendChild(header);
+
+  // Detail row for failures
+  if (isFailure && !isMissed) {
+    const detail = document.createElement('div');
+    detail.className = 'ml-[calc(56px+20px)] space-y-1';
+    detail.innerHTML = `
+      ${event.triggerSignal ? `<p class="text-[10px] text-gray-500"><span class="font-semibold text-gray-600">Signal:</span> ${event.triggerSignal}</p>` : ''}
+      <div class="flex flex-wrap gap-1">
+        ${event.confidence != null ? `<span class="text-[9px] font-semibold bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded-md">${event.confidence}% confidence</span>` : ''}
+        ${event.costImpact != null ? `<span class="text-[9px] font-semibold bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded-md">$${event.costImpact} impact</span>` : ''}
+        ${event.robotId ? `<span class="text-[9px] text-gray-400 font-mono">${event.robotId}</span>` : ''}
+        ${wmsMode === 'wms' ? '<span class="text-[9px] font-semibold bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded-md">Pushed to WMS ✓</span>' : ''}
+        <span id="alerts-${event.id}"></span>
+      </div>`;
+    div.appendChild(detail);
+  }
+
+  if (isMissed) {
+    const warn = document.createElement('p');
+    warn.className = 'ml-[calc(56px+20px)] text-[10px] font-bold text-red-700';
+    warn.textContent = 'FALSE NEGATIVE — this failure escaped without correction';
+    div.appendChild(warn);
+  }
+
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+}
+
+function addCorrection(event) {
+  const queueEl = document.getElementById('correctionQueue');
+  if (queueEl.querySelector('p')) queueEl.innerHTML = '';
+  const c = { id: event.id, failureType: event.failureType, message: event.correction, timestamp: event.timestamp };
+  corrections.unshift(c);
+  if (corrections.length > 20) corrections.pop();
+
+  const div = document.createElement('div');
+  div.id = `corr-${c.id}`;
+  div.className = 'bg-gray-50 rounded-xl p-2.5 border border-gray-100 slide-in';
+  div.innerHTML = `
+    <div class="flex items-start justify-between gap-2 mb-1">
+      <span class="text-[10px] font-semibold text-orange-600 bg-orange-50 px-1.5 py-0.5 rounded-md">${c.failureType}</span>
+      <span id="sent-${c.id}" class="text-[10px] text-gray-400 flex items-center gap-1">
+        <span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse-soft"></span>Queued
+      </span>
+    </div>
+    <p class="text-[10px] text-gray-700 leading-relaxed">${c.message}</p>
+    <p class="text-[10px] text-gray-400 mt-1">${new Date(c.timestamp).toLocaleTimeString()}</p>`;
+  queueEl.prepend(div);
+
+  setTimeout(() => {
+    const s = document.getElementById(`sent-${c.id}`);
+    if (s) s.innerHTML = '<svg width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="#059669" stroke-width="1.5" stroke-linecap="round"/></svg><span class="text-emerald-600 font-semibold">Sent to Robot</span>';
+  }, 1500);
+
+  // Update pending badge
+  const pending = corrections.length;
+  const pb = document.getElementById('pendingBadge');
+  pb.textContent = `${pending} pending`;
+  pb.classList.remove('hidden');
+}
+
+function fireWebhook(event) {
+  lastWebhookPayload = {
+    event: "task_verification", version: "1.0",
+    timestamp: new Date(event.timestamp).toISOString(),
+    robot_id: event.robotId, status: "failure",
+    failure_type: event.failureType, severity: event.severity,
+    confidence: event.confidence, latency_ms: event.latencyMs,
+    cost_impact_usd: event.costImpact, trigger_signal: event.triggerSignal,
+    correction: event.correction, wms_acknowledged: wmsMode === 'wms',
+    source: event.source || 'sim'
+  };
+  document.getElementById('webhookJSON').textContent = JSON.stringify(lastWebhookPayload, null, 2);
+  document.getElementById('webhookHint').textContent = 'Latest payload ready';
+
+  const fb = document.getElementById('webhookFiredBadge');
+  fb.classList.remove('hidden');
+  setTimeout(() => fb.classList.add('hidden'), 2000);
+}
+
+async function sendAlerts(event) {
+  try {
+    const res = await fetch('/api/alert', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: savedEmail || undefined, phone: savedPhone || undefined,
+        failureType: event.failureType, severity: event.severity,
+        confidence: event.confidence, costImpact: event.costImpact,
+        correction: event.correction, robotId: event.robotId
+      })
+    });
+    const result = await res.json();
+    const alertsEl = document.getElementById(`alerts-${event.id}`);
+    if (alertsEl) {
+      if (result.emailSent) alertsEl.innerHTML += '<span class="text-[9px] font-semibold bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded-md">📧 Email Sent</span> ';
+      if (result.smsSent)  alertsEl.innerHTML += '<span class="text-[9px] font-semibold bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded-md">📱 SMS Sent</span>';
+    }
+  } catch {}
+}
+
+function flashFNAlarm() {
+  const el = document.getElementById('fnAlarm');
+  el.classList.remove('hidden');
+  setTimeout(() => el.classList.add('hidden'), 5000);
+}
+
+// ─── Stats ────────────────────────────────────────────────────────────────────
+
+let displayedCost = 0;
+let costAnimFrame = null;
+
+function animateCost(target) {
+  const start = displayedCost;
+  const duration = 700;
+  const startTime = performance.now();
+  if (costAnimFrame) cancelAnimationFrame(costAnimFrame);
+  function frame(now) {
+    const p = Math.min((now - startTime) / duration, 1);
+    const eased = 1 - Math.pow(1 - p, 3);
+    displayedCost = Math.round(start + (target - start) * eased);
+    document.getElementById('statCost').textContent = '$' + displayedCost.toLocaleString();
+    document.getElementById('bigCost').textContent = '$' + displayedCost.toLocaleString();
+    if (p < 1) costAnimFrame = requestAnimationFrame(frame);
+  }
+  costAnimFrame = requestAnimationFrame(frame);
+}
+
+function updateStats() {
+  document.getElementById('statTasks').textContent = stats.tasks;
+  document.getElementById('statCaught').textContent = stats.caught;
+  const totalFailures = stats.caught + stats.missed;
+  if (totalFailures > 0) {
+    const acc = ((stats.caught / totalFailures) * 100).toFixed(1);
+    const accEl = document.getElementById('statAcc');
+    accEl.textContent = acc + '%';
+    accEl.className = parseFloat(acc) < 95
+      ? 'text-xl font-bold text-red-600'
+      : 'text-xl font-bold text-emerald-600';
+    if (stats.missed > 0) {
+      const m = document.getElementById('statMissed');
+      m.textContent = `${stats.missed} missed`;
+      m.classList.remove('hidden');
+      document.getElementById('statAccCard').className = 'bg-red-50 rounded-2xl shadow-soft p-3 text-center';
+    }
+  }
+}
+
+// ─── Sparkline ────────────────────────────────────────────────────────────────
+
+function updateSparkline() {
+  if (latencies.length < 2) return;
+  const W = 80, H = 22;
+  const max = Math.max(...latencies, 500);
+  const min = Math.min(...latencies, 50);
+  const range = max - min || 1;
+  const step = W / (latencies.length - 1);
+  const pts = latencies.map((v, i) => `${i * step},${H - ((v - min) / range) * (H - 2) - 1}`).join(' ');
+  const last = latencies[latencies.length - 1];
+  const color = last > 500 ? '#ef4444' : last > 300 ? '#f59e0b' : '#10b981';
+  document.getElementById('sparkline').innerHTML =
+    `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>`;
+  const avg = Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length);
+  document.getElementById('avgLatency').textContent = `avg ${avg}ms`;
+  document.getElementById('avgLatency').className = avg > 500
+    ? 'text-[9px] font-mono text-red-500 font-semibold'
+    : 'text-[9px] font-mono text-gray-400';
+}
+
+// ─── Webhook Panel ────────────────────────────────────────────────────────────
+
+let webhookOpen = false;
+function toggleWebhook() {
+  webhookOpen = !webhookOpen;
+  document.getElementById('webhookPanel').classList.toggle('hidden', !webhookOpen);
+  document.getElementById('webhookChevron').style.transform = webhookOpen ? 'rotate(180deg)' : '';
+}
+
+// ─── Monthly Report ───────────────────────────────────────────────────────────
+
+function showReport() {
+  const failures = allEvents.filter(e => e.status === 'failure');
+  const caught = failures.filter(e => !e.missed);
+  const byH = caught.filter(e => e.severity === 'HIGH').length;
+  const byM = caught.filter(e => e.severity === 'MEDIUM').length;
+  const byL = caught.filter(e => e.severity === 'LOW').length;
+  const acc = failures.length > 0 ? ((caught.length / failures.length) * 100).toFixed(1) : '100.0';
+  const avgLat = allLatencies.length > 0
+    ? Math.round(allLatencies.reduce((a, b) => a + b, 0) / allLatencies.length) : 0;
+  const rows = [
+    ['Total Tasks', allEvents.length],
+    ['Failures Caught', caught.length],
+    ['  — HIGH', byH, false, false, true],
+    ['  — MEDIUM', byM, false, false, true],
+    ['  — LOW', byL, false, false, true],
+    ['False Negatives', stats.missed, stats.missed > 0],
+    ['Total Cost Prevented', `$${stats.totalCost.toLocaleString()}`, false, true],
+    ['Detection Accuracy', `${acc}%`],
+    ['Avg Latency', `${avgLat}ms`, avgLat > 500],
+  ];
+  document.getElementById('reportDate').textContent =
+    new Date().toLocaleDateString('en', { month: 'long', year: 'numeric' });
+  document.getElementById('reportBody').innerHTML = rows.map(([l, v, alarm, highlight, indent]) =>
+    `<div class="flex justify-between items-center py-1.5 border-b border-gray-50 ${indent?'pl-3':''}">
+      <span class="text-xs ${indent?'text-gray-400':'text-gray-500'}">${l}</span>
+      <span class="text-xs font-semibold ${highlight?'text-blue-600 text-sm':alarm?'text-red-600':'text-gray-900'}">${v}</span>
+    </div>`
+  ).join('');
+  document.getElementById('reportSummary').innerHTML =
+    `<p class="text-xs text-blue-800 font-medium leading-relaxed text-center">
+      &ldquo;Correx prevented an estimated <strong>$${stats.totalCost.toLocaleString()}</strong>
+      across <strong>${allEvents.length.toLocaleString()}</strong> tasks this session.&rdquo;
+    </p>`;
+  document.getElementById('reportModal').classList.remove('hidden');
+}
+
+function hideReport() {
+  document.getElementById('reportModal').classList.add('hidden');
+}
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+
+// Auto-start camera on mobile (rear-facing default)
+if (/Mobi|Android|iPhone|iPad/i.test(navigator.userAgent)) {
+  startCamera();
+}
+
+// Start simulation tick
+scheduleTick();
+</script>
+</body>
+</html>

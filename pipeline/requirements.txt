@@ -1,0 +1,36 @@
+# Core ML
+torch>=2.1.0
+torchvision>=0.16.0
+numpy>=1.24.0
+Pillow>=10.0.0
+tqdm>=4.65.0
+
+# CLIP (install separately — not on PyPI directly)
+# pip install git+https://github.com/openai/CLIP.git
+
+# HuggingFace datasets
+datasets>=2.18.0
+huggingface-hub>=0.21.0
+
+# OpenAI (for GPT-4o labeling in 2_label.py)
+openai>=1.20.0
+
+# TensorFlow + TFJS (for 4_export.py) + TFDS (for reading DROID RLDS format)
+tensorflow>=2.14.0
+tensorflow-datasets>=4.9.0
+tensorflowjs>=4.17.0
+
+# OpenCV (for RealSource MP4 frame extraction in 1_download.py)
+opencv-python>=4.8.0
+
+# HTTP
+requests>=2.31.0
+
+# gsutil (for DROID GCS download — or install Google Cloud SDK instead)
+gsutil>=5.27
+
+# Weights & Biases (optional, for training logging)
+wandb>=0.16.0
+
+# LeRobot (for dataset format compatibility)
+# pip install lerobot  # or: pip install git+https://github.com/huggingface/lerobot.git
