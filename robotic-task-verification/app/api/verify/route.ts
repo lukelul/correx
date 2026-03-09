@@ -7,6 +7,14 @@ export interface CheckResult {
   detail: string;
 }
 
+export interface MotorCommands {
+  translation: { x: number; y: number; z: number }; // cm deltas — x=right, y=forward, z=up
+  wrist_rotate: number;        // degrees, positive = clockwise
+  wrist_pitch: number;         // degrees, positive = tilt down
+  gripper_width_mm: number | null; // absolute target opening in mm (20–100), null = no change
+  approach_angle_deg: number | null; // approach angle from vertical in degrees, null = no change
+}
+
 export interface VerificationResult {
   verdict: "PASS" | "FAIL";
   confidence: number;
@@ -16,6 +24,7 @@ export interface VerificationResult {
   recommendation: string;
   failure_reasoning: string | null;
   corrective_action: string | null;
+  motor_commands: MotorCommands | null;
 }
 
 // Token cost estimates per image (OpenAI pricing):
@@ -67,8 +76,17 @@ Return a JSON object with this exact structure:
   "risk_level": "low"|"medium"|"high"|"critical",
   "recommendation": "brief actionable recommendation",
   "failure_reasoning": "Level 1 chain-of-thought root cause explanation with specific visual evidence and quantitative detail. Set to null for PASS.",
-  "corrective_action": "Level 2 exact corrective motion sequence with concrete parameters (angles, distances, directions, joint adjustments). Set to null for PASS."
+  "corrective_action": "Level 2 exact corrective motion sequence with concrete parameters (angles, distances, directions, joint adjustments). Set to null for PASS.",
+  "motor_commands": {
+    "translation": { "x": 0.0, "y": 0.0, "z": 0.0 },
+    "wrist_rotate": 0.0,
+    "wrist_pitch": 0.0,
+    "gripper_width_mm": null,
+    "approach_angle_deg": null
+  }
 }
+
+motor_commands must be grounded in the corrective_action values — extract and convert the correction into exact numeric motor targets. x=right(+)/left(-), y=forward(+)/back(-), z=up(+)/down(-) in cm. wrist_rotate positive=clockwise. wrist_pitch positive=tilt down. gripper_width_mm is the absolute target opening (e.g. 45 for a narrow grip, 80 for open). approach_angle_deg is degrees from vertical (0=straight down). All values must be realistic — derive them from visible scene geometry. Set motor_commands to null for PASS.
 
 Be precise — do not conflate uncertainty with danger. Mark things "warning" when you cannot be sure, and only use "fail" + high/critical risk when there is clear visual evidence of a problem. Return ONLY valid JSON, no markdown.`;
 

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import type { VerificationResult as VResult, CheckResult } from "@/app/api/verify/route";
+import RobotControlPanel from "@/components/RobotControlPanel";
 
 interface Props {
   result: VResult;
@@ -265,6 +266,11 @@ export default function VerificationResult({ result, onReset, latencyMs }: Props
             <p className="text-sm text-blue-950 leading-relaxed font-mono">{result.corrective_action}</p>
           </div>
         </motion.div>
+      )}
+
+      {/* Motor Command Preview */}
+      {result.motor_commands && (
+        <RobotControlPanel commands={result.motor_commands} />
       )}
 
       {/* Reset button */}
