@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence, animate } from "framer-motion";
-import { generateNextEvent, type WarehouseEvent } from "@/lib/warehouseSimulator";
+import { generateNextEvent, type WarehouseEvent, type MotorSnapshot } from "@/lib/warehouseSimulator";
+import RobotControlPanel from "@/components/RobotControlPanel";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -465,6 +466,8 @@ export default function LiveMonitor() {
   const [showReport, setShowReport] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [eventMeta, setEventMeta] = useState<Record<string, EventMeta>>({});
+  const [latestMotorCommands, setLatestMotorCommands] = useState<MotorSnapshot | null>(null);
+  const [motorKey, setMotorKey] = useState(0);
 
   const logRef = useRef<HTMLDivElement>(null);
   const allEventsRef = useRef<WarehouseEvent[]>([]);
@@ -607,6 +610,12 @@ export default function LiveMonitor() {
                 ...prev,
                 [event.id]: { ...prev[event.id], wmsAcknowledged: true },
               }));
+            }
+
+            // Motor commands panel
+            if (event.motorCommands) {
+              setLatestMotorCommands(event.motorCommands);
+              setMotorKey((k) => k + 1);
             }
 
             // Correction queue
@@ -933,6 +942,24 @@ export default function LiveMonitor() {
             )}
           </div>
         </div>
+      </div>
+
+      {/* Motor Commands */}
+      <div>
+        <div className="flex items-center gap-2 mb-2">
+          <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Motor Commands</span>
+          {latestMotorCommands && (
+            <span className="text-[9px] font-bold bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-full">LIVE</span>
+          )}
+        </div>
+        {latestMotorCommands ? (
+          <RobotControlPanel key={motorKey} commands={latestMotorCommands} />
+        ) : (
+          <div className="rounded-2xl bg-[#080d18] border border-white/[0.06] px-5 py-8 flex flex-col items-center justify-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-gray-700" />
+            <p className="font-mono text-[11px] text-gray-600 uppercase tracking-widest">Awaiting first failure event</p>
+          </div>
+        )}
       </div>
 
       {/* Webhook Panel */}

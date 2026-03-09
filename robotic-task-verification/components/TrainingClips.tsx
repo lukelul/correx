@@ -4,6 +4,7 @@ import { useState, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { extractFrames, type FrameMode } from "@/lib/extractFrames";
 import type { VerificationResult } from "@/app/api/verify/route";
+import RobotControlPanel from "@/components/RobotControlPanel";
 
 // ── On-device TF.js inference ────────────────────────────────────────────────
 const CORREX_CLASSES = ["success", "wrong_item", "drop_detected", "placement_miss", "grip_failure"] as const;
@@ -280,6 +281,8 @@ export default function TrainingClips() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [selectedMotorClipId, setSelectedMotorClipId] = useState<string | null>(null);
+  const [motorKey, setMotorKey] = useState(0);
 
   const updateManualVerdict = (id: string, v: "PASS" | "FAIL") =>
     setClips((prev) => prev.map((c) => (c.id === id ? { ...c, manualVerdict: v } : c)));
@@ -582,15 +585,32 @@ export default function TrainingClips() {
                         {clip.correctionNote && (
                           <p className="text-[10px] text-amber-600 italic flex-1 truncate">&quot;{clip.correctionNote}&quot;</p>
                         )}
-                        <button
-                          onClick={() => setEditingId(clip.id)}
-                          className="text-[10px] text-gray-400 hover:text-gray-600 flex-shrink-0 flex items-center gap-0.5 ml-auto"
-                        >
-                          <svg width="9" height="9" viewBox="0 0 10 10" fill="none">
-                            <path d="M7 1.5l1.5 1.5L3 8.5H1.5V7L7 1.5z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round"/>
-                          </svg>
-                          {clip.manualVerdict ? "Edit correction" : "Correct"}
-                        </button>
+                        <div className="flex items-center gap-2 ml-auto">
+                          {(clip.verdict === "FAIL" || clip.manualVerdict === "FAIL") && clip.result?.motor_commands && (
+                            <button
+                              onClick={() => {
+                                setSelectedMotorClipId(clip.id);
+                                setMotorKey((k) => k + 1);
+                              }}
+                              className={`text-[10px] font-semibold flex items-center gap-1 px-2 py-0.5 rounded-lg transition-colors ${
+                                selectedMotorClipId === clip.id
+                                  ? "bg-[#0d1424] text-cyan-400"
+                                  : "bg-gray-100 text-gray-500 hover:bg-gray-800 hover:text-cyan-400"
+                              }`}
+                            >
+                              <span className="font-mono">▶</span> Motor cmds
+                            </button>
+                          )}
+                          <button
+                            onClick={() => setEditingId(clip.id)}
+                            className="text-[10px] text-gray-400 hover:text-gray-600 flex-shrink-0 flex items-center gap-0.5"
+                          >
+                            <svg width="9" height="9" viewBox="0 0 10 10" fill="none">
+                              <path d="M7 1.5l1.5 1.5L3 8.5H1.5V7L7 1.5z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round"/>
+                            </svg>
+                            {clip.manualVerdict ? "Edit correction" : "Correct"}
+                          </button>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -639,6 +659,36 @@ export default function TrainingClips() {
           </motion.div>
         ))}
       </AnimatePresence>
+
+      {/* Motor Commands */}
+      {clips.length > 0 && (
+        <div>
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Motor Commands</span>
+            {selectedMotorClipId && (
+              <span className="text-[9px] font-bold bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full">
+                {clips.find((c) => c.id === selectedMotorClipId)?.file.name}
+              </span>
+            )}
+          </div>
+          {(() => {
+            const sel = clips.find((c) => c.id === selectedMotorClipId);
+            const cmds = sel?.result?.motor_commands;
+            return cmds ? (
+              <RobotControlPanel key={motorKey} commands={cmds} />
+            ) : (
+              <div className="rounded-2xl bg-[#080d18] border border-white/[0.06] px-5 py-8 flex flex-col items-center justify-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-gray-700" />
+                <p className="font-mono text-[11px] text-gray-600 uppercase tracking-widest text-center">
+                  {clips.some((c) => (c.verdict === "FAIL" || c.manualVerdict === "FAIL") && c.result?.motor_commands)
+                    ? "Click ▶ Motor cmds on a FAIL clip"
+                    : "Process clips to generate motor commands"}
+                </p>
+              </div>
+            );
+          })()}
+        </div>
+      )}
 
       {/* Action buttons */}
       {clips.length > 0 && (

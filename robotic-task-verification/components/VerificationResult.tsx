@@ -269,8 +269,10 @@ export default function VerificationResult({ result, onReset, latencyMs }: Props
       )}
 
       {/* Motor Command Preview */}
-      {result.motor_commands && (
-        <RobotControlPanel commands={result.motor_commands} />
+      {result.corrective_action && (
+        <RobotControlPanel
+          commands={result.motor_commands ?? { translation: { x: 0, y: 0, z: 0 }, wrist_rotate: 0, wrist_pitch: 0, gripper_width_mm: null, approach_angle_deg: null }}
+        />
       )}
 
       {/* Reset button */}
