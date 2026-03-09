@@ -217,7 +217,10 @@ export async function POST(req: NextRequest) {
       temperature: 0.2,
     });
 
-    const raw = response.choices[0]?.message?.content ?? "";
+    const raw = (response.choices[0]?.message?.content ?? "")
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/\s*```\s*$/, "")
+      .trim();
 
     let result: VerificationResult;
     try {
