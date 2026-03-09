@@ -14,6 +14,8 @@ export interface VerificationResult {
   checks: CheckResult[];
   risk_level: "low" | "medium" | "high" | "critical";
   recommendation: string;
+  failure_reasoning: string | null;
+  corrective_action: string | null;
 }
 
 // Token cost estimates per image (OpenAI pricing):
@@ -41,6 +43,16 @@ You must evaluate:
 
 When multiple frames are provided, they are evenly-spaced samples from a video recording of the task. Use the temporal sequence to understand what happened throughout the task, not just the final state. The last frame is most important for verifying final placement.
 
+OBJECT TRACKING RULE:
+If the task involves the robot manipulating or transporting an object, that object must remain visible in frame throughout the entire sequence — unless it has been intentionally placed at the target destination. If the object disappears from frame before placement is confirmed, flag this as a warning or fail under "Unintended Consequences" and note the frame at which the object was last seen.
+
+REASONING REQUIREMENTS (for FAIL verdicts only):
+
+Level 1 — Failure Explanation: Reason through the root cause chain of the failure with specificity. Identify the precise mechanism: approach angle, gripper alignment, timing, force applied, object position offset, visual occlusion, etc. Reference specific observable evidence from the frames (e.g., "the gripper shadow indicates a 15° off-axis approach", "the item is 3cm left of the target zone visible in frame 4"). Be quantitative where possible.
+
+Level 2 — Corrective Action: Given the diagnosed failure mechanism, specify the exact corrective motion sequence the robot should execute on the next attempt. Include concrete parameters: direction, distance, angle adjustments, joint rotations, timing changes, grip width, approach vector. Write this as an actionable instruction the robot's controller could act on.
+For placement failures specifically, be highly spatial: describe the target zone relative to visible landmarks, state the required translation in all three axes (e.g. "move 4cm left along X, 2cm forward along Y, lower 1.5cm on Z"), the required orientation, and the exact point at which to release. Estimate distances from visible object scales and scene geometry — make the numbers realistic and grounded in what is observable.
+
 Return a JSON object with this exact structure:
 {
   "verdict": "PASS" or "FAIL",
@@ -53,7 +65,9 @@ Return a JSON object with this exact structure:
     { "label": "Unintended Consequences", "status": "pass"|"fail"|"warning", "detail": "..." }
   ],
   "risk_level": "low"|"medium"|"high"|"critical",
-  "recommendation": "brief actionable recommendation"
+  "recommendation": "brief actionable recommendation",
+  "failure_reasoning": "Level 1 chain-of-thought root cause explanation with specific visual evidence and quantitative detail. Set to null for PASS.",
+  "corrective_action": "Level 2 exact corrective motion sequence with concrete parameters (angles, distances, directions, joint adjustments). Set to null for PASS."
 }
 
 Be precise — do not conflate uncertainty with danger. Mark things "warning" when you cannot be sure, and only use "fail" + high/critical risk when there is clear visual evidence of a problem. Return ONLY valid JSON, no markdown.`;
@@ -181,7 +195,7 @@ export async function POST(req: NextRequest) {
         { role: "system", content: SYSTEM_PROMPT },
         { role: "user", content: userContent },
       ],
-      max_tokens: 1024,
+      max_tokens: 2048,
       temperature: 0.2,
     });
 

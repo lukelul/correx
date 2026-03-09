@@ -89,7 +89,7 @@ const HOME_MODES: { id: Tab; label: string; description: string; icon: React.Rea
   {
     id: "verify",
     label: "Verify",
-    description: "Analyze robot task outcomes with AI",
+    description: "PASS/FAIL + root cause + corrective distances",
     icon: (
       <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
         <path d="M10 2L3 5.5v5.25c0 4.375 3.208 8.458 7 9.583 3.792-1.125 7-5.208 7-9.583V5.5L10 2z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/>
@@ -100,7 +100,7 @@ const HOME_MODES: { id: Tab; label: string; description: string; icon: React.Rea
   {
     id: "monitor",
     label: "Live Monitor",
-    description: "Real-time robot feed & corrections",
+    description: "Live feed with real-time correction queue",
     icon: (
       <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
         <polyline points="2,10 5,10 6.5,6 8,14 9.5,10 11,10 12.5,7 14,10 18,10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
@@ -335,7 +335,7 @@ export default function Home() {
                 animate={{ opacity: 1 }}
                 transition={{ duration: 0.4, delay: 0.45 }}
               >
-                Robotic task verification & real-time safety compliance
+                Verify outcomes · diagnose failures · correct with precision
               </motion.p>
             )}
           </div>
@@ -400,7 +400,7 @@ export default function Home() {
             Correx
           </h1>
           <p className="text-sm text-gray-400 mt-2 max-w-xs mx-auto leading-relaxed">
-            Robotic task verification & real-time safety compliance
+            Post-execution verification · root cause reasoning · corrective motion sequences
           </p>
         </motion.div>
       </header>

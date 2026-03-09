@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { motion } from "framer-motion";
 import type { VerificationResult as VResult, CheckResult } from "@/app/api/verify/route";
 
@@ -68,6 +69,14 @@ export default function VerificationResult({ result, onReset, latencyMs }: Props
   const isPass = result.verdict === "PASS";
   const riskCfg = RISK_CONFIG[result.risk_level];
   const isHighLatency = latencyMs != null && latencyMs > 500;
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    if (!result.corrective_action) return;
+    navigator.clipboard.writeText(result.corrective_action);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
   return (
     <motion.div
@@ -189,6 +198,74 @@ export default function VerificationResult({ result, onReset, latencyMs }: Props
         </div>
         <p className="text-sm text-gray-600 leading-relaxed">{result.recommendation}</p>
       </motion.div>
+
+      {/* Level 1 — Failure Reasoning */}
+      {result.failure_reasoning && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.68, duration: 0.38 }}
+          className="rounded-2xl overflow-hidden border border-amber-200"
+        >
+          <div className="bg-amber-500 px-5 py-3 flex items-center gap-2.5">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="flex-shrink-0">
+              <circle cx="8" cy="8" r="7" fill="rgba(255,255,255,0.25)" />
+              <path d="M8 5v4" stroke="white" strokeWidth="1.6" strokeLinecap="round" />
+              <circle cx="8" cy="12" r="0.8" fill="white" />
+            </svg>
+            <span className="text-xs font-bold text-white uppercase tracking-widest">Root Cause Analysis</span>
+          </div>
+          <div className="bg-amber-50 px-5 py-4">
+            <p className="text-[11px] text-amber-600 font-semibold uppercase tracking-wider mb-2">Why it failed</p>
+            <p className="text-sm text-amber-950 leading-relaxed">{result.failure_reasoning}</p>
+          </div>
+        </motion.div>
+      )}
+
+      {/* Level 2 — Corrective Action */}
+      {result.corrective_action && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.78, duration: 0.38 }}
+          className="rounded-2xl overflow-hidden border border-blue-200"
+        >
+          <div className="bg-[#1e40af] px-5 py-3 flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="flex-shrink-0">
+                <circle cx="8" cy="8" r="7" fill="rgba(255,255,255,0.2)" />
+                <path d="M5 8h6M9 5.5L11.5 8 9 10.5" stroke="white" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              <span className="text-xs font-bold text-white uppercase tracking-widest">Correction Sequence</span>
+            </div>
+            <button
+              onClick={handleCopy}
+              className="flex items-center gap-1.5 text-[11px] font-semibold text-blue-200 hover:text-white transition-colors bg-white/10 hover:bg-white/20 px-2.5 py-1 rounded-lg"
+            >
+              {copied ? (
+                <>
+                  <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
+                    <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  Copied
+                </>
+              ) : (
+                <>
+                  <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
+                    <rect x="4" y="4" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.2" />
+                    <path d="M8 4V2.5A1.5 1.5 0 006.5 1h-4A1.5 1.5 0 001 2.5v4A1.5 1.5 0 002.5 8H4" stroke="currentColor" strokeWidth="1.2" />
+                  </svg>
+                  Copy
+                </>
+              )}
+            </button>
+          </div>
+          <div className="bg-[#eff6ff] px-5 py-4">
+            <p className="text-[11px] text-blue-600 font-semibold uppercase tracking-wider mb-2">Send to robot controller</p>
+            <p className="text-sm text-blue-950 leading-relaxed font-mono">{result.corrective_action}</p>
+          </div>
+        </motion.div>
+      )}
 
       {/* Reset button */}
       <motion.button
